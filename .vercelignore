@@ -1,0 +1,9 @@
+data
+node_modules
+.git
+.env*
+!.env.example
+test
+*.log
+editor-instrumen.png
+JALANKAN.cmd
