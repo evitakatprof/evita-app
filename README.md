@@ -61,7 +61,8 @@ Undangan menggunakan token acak, berlaku 7 hari, dan hanya menerima satu pengiri
 - Ekspor CSV pada **Hasil evaluasi** mencakup perbandingan Pre/Post dan dapat dibuka di Excel. Ekspor bukti dan seluruh jawaban secara massal belum tersedia.
 - **Cetak / Simpan PDF** memakai dialog cetak browser. Laporan berisi kesimpulan Urmin dan rekomendasi pimpinan; tabel rekap menampilkan nilai terkini, belum berupa snapshot bertanda tangan elektronik.
 - Header menggunakan simbol EVITA dari lampiran di kiri, teks di kanan simbol. Logo Korpolairud belum tersedia dan diganti penanda teks sementara.
-- Pengelolaan profil peserta saat ini berupa penambahan; edit, impor massal, dan pengarsipan belum tersedia.
+- Admin dapat menghapus angkatan dan peserta pada **Peserta & angkatan**, jawaban pada **Hasil evaluasi**, serta laporan pada **Laporan & rekomendasi**. Konfirmasi menampilkan dampaknya dan meminta mengetik HAPUS. Data dipindahkan ke **Akun & aktivitas → Data terhapus** dan dapat dipulihkan. Menghapus angkatan juga menghapus data terkait; menghapus peserta tetap mempertahankan laporan angkatan sehingga kesimpulannya perlu diperiksa ulang. Menghapus hasil evaluasi membatalkan undangan untuk penilaian itu. Tidak ada penghapusan permanen melalui antarmuka ini.
+- Pemulihan dilakukan sekaligus beserta data terkait. Bila identitas/nomor internal sudah dipakai oleh data baru atau data induknya belum dipulihkan, pemulihan dibatalkan tanpa menimpa data yang ada. Edit profil dan impor massal belum tersedia.
 - Aplikasi ini untuk uji lokal/pilot. Sebelum produksi diperlukan HTTPS, verifikasi responden, aturan penilaian resmi, kebijakan bukti/retensi, pemulihan akun, dan pengujian operasional instansi. Bila memakai reverse proxy HTTPS, atur `COOKIE_SECURE=1` dan teruskan Host publik dengan benar.
 
 ## Pengujian

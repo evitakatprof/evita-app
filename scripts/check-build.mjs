@@ -1,6 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {readFileSync,existsSync} from 'node:fs';
-const files=['server.mjs','database.mjs','scoring.mjs','api/index.mjs','public/app.js','public/question-editor.js','public/login-view.js'];
+const files=['server.mjs','database.mjs','deletion.mjs','scoring.mjs','api/index.mjs','public/app.js','public/question-editor.js','public/login-view.js'];
 for(const file of files){const result=spawnSync(process.execPath,['--check',file],{stdio:'inherit'});if(result.status!==0)process.exit(1)}
 for(const file of ['public/index.html','public/styles.css','public/brand.png','public/login-art.jpeg','public/app-header.jpeg'])if(!existsSync(file))throw Error(`Missing asset: ${file}`);
 JSON.parse(readFileSync('vercel.json','utf8'));

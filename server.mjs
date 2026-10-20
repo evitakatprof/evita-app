@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import QRCode from 'qrcode';
 import {score,delta,achievement} from './scoring.mjs';
+import {removeRecord,restoreRecord} from './deletion.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const dataDir=process.env.DATA_DIR||path.join(root,'data');
 const db=await openDatabase(dataDir);
@@ -19,6 +20,7 @@ CREATE TABLE IF NOT EXISTS invites(token TEXT PRIMARY KEY,participant_id INTEGER
 CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY,token TEXT UNIQUE,participant_id INTEGER,type TEXT,respondent TEXT,instrument_id INTEGER,body TEXT,score REAL,status TEXT DEFAULT 'submitted',review TEXT DEFAULT '',created TEXT);
 CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY,cohort_id INTEGER,summary TEXT,recommendation TEXT DEFAULT '',created TEXT);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor TEXT,action TEXT,created TEXT);
+CREATE TABLE IF NOT EXISTS deleted_records(id INTEGER PRIMARY KEY,kind TEXT,name TEXT,body TEXT,actor TEXT,created TEXT);
 CREATE UNIQUE INDEX IF NOT EXISTS instrument_version ON instruments(prodi,type,version);
 CREATE UNIQUE INDEX IF NOT EXISTS submission_respondent ON submissions(participant_id,type,respondent);
 CREATE UNIQUE INDEX IF NOT EXISTS participant_identity ON participants(cohort_id,nrp);`));
@@ -110,6 +112,9 @@ export async function handler(req,res){try{
  if(route==='/api/reports'&&req.method==='POST'){const u=(await requireUser(req,'admin')),b=await body(req);if(!clean(b.summary)||!(await db.prepare('SELECT id FROM cohorts WHERE id=?').get(Number(b.cohortId))))fail('Angkatan dan kesimpulan wajib diisi');(await db.prepare('INSERT INTO reports(cohort_id,summary,created) VALUES(?,?,?)').run(Number(b.cohortId),clean(b.summary,10000),now()));(await audit(u.username,'Menerbitkan laporan kepada Kabagkatprof'));return json(res,{ok:true})}
  if(route==='/api/recommendation'&&req.method==='POST'){const u=(await requireUser(req,'leader')),b=await body(req);if(!clean(b.text)||!(await db.prepare('SELECT id FROM reports WHERE id=?').get(Number(b.id))))fail('Laporan dan rekomendasi wajib diisi');(await db.prepare('UPDATE reports SET recommendation=? WHERE id=?').run(clean(b.text,10000),Number(b.id)));(await audit(u.username,`Memberikan rekomendasi laporan #${b.id}`));return json(res,{ok:true})}
  if(route==='/api/evidence'){(await requireUser(req));const s=(await db.prepare('SELECT body FROM submissions WHERE id=?').get(Number(url.searchParams.get('id'))));const f=s&&JSON.parse(s.body).files[Number(url.searchParams.get('index'))];if(!f)fail('Berkas tidak ditemukan',404);res.writeHead(200,{'Content-Type':f.type,'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`,'Cache-Control':'no-store'});return res.end(Buffer.from(f.data,'base64'))}
+ if(route==='/api/delete'&&req.method==='POST'){const u=await requireUser(req,'admin'),b=await body(req);return json(res,await removeRecord(db,{kind:b.kind,id:Number(b.id),actor:u.username}))}
+ if(route==='/api/trash'){await requireUser(req,'admin');return json(res,await db.prepare('SELECT id,kind,name,actor,created FROM deleted_records ORDER BY id DESC').all())}
+ if(route==='/api/restore'&&req.method==='POST'){const u=await requireUser(req,'admin'),b=await body(req);return json(res,await restoreRecord(db,Number(b.id),u.username))}
  if(route.startsWith('/api/'))fail('Endpoint tidak ditemukan',404);
  const allowed={'/':'index.html','/app.js':'app.js','/login-view.js':'login-view.js','/login-art.jpeg':'login-art.jpeg','/app-header.jpeg':'app-header.jpeg','/question-editor.js':'question-editor.js','/styles.css':'styles.css','/brand.png':'brand.png'};const file=allowed[route];if(!file||!existsSync(path.join(root,'public',file)))fail('Halaman tidak ditemukan',404);res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css':file.endsWith('.jpeg')?'image/jpeg':file.endsWith('.png')?'image/png':'text/html; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"});res.end(readFileSync(path.join(root,'public',file)));
  }catch(error){if(/UNIQUE constraint failed|SQLITE_CONSTRAINT_UNIQUE/.test(error.message)){error.status=409;error.message='Data sudah tersimpan atau sedang diperbarui. Muat ulang sebelum mencoba lagi.'}if(!error.status)console.error(error);if(!res.headersSent)json(res,{error:error.status?error.message:'Terjadi kesalahan server'},error.status||500);else res.end()}}

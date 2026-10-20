@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export function remoteDatabase(client) {
   return {
+    async transaction(action){const tx=await client.transaction('write');try{const result=await action(remoteDatabase(tx));await tx.commit();return result}catch(error){await tx.rollback();throw error}finally{tx.close()}},
     async exec(sql) { await client.executeMultiple(sql.replace(/PRAGMA[^;]*;/gi,'')); },
     prepare(sql) {
       const execute = args => client.execute({sql,args});
@@ -26,5 +27,8 @@ export async function openDatabase(dataDir) {
   if (process.env.VERCEL) throw Error('Deployment Vercel memerlukan TURSO_DATABASE_URL dan TURSO_AUTH_TOKEN. SQLite sementara tidak digunakan.');
   mkdirSync(dataDir,{recursive:true});
   const {DatabaseSync}=await import('node:sqlite');
-  return new DatabaseSync(path.join(dataDir,'evita.sqlite'));
+  const filename=path.join(dataDir,'evita.sqlite');
+  const db=new DatabaseSync(filename);
+  db.transaction=async action=>{const tx=new DatabaseSync(filename);tx.exec('BEGIN IMMEDIATE');try{const result=await action(tx);tx.exec('COMMIT');return result}catch(error){tx.exec('ROLLBACK');throw error}finally{tx.close()}};
+  return db;
 }
