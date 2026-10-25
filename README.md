@@ -20,7 +20,7 @@ Untuk menentukan kata sandi sebelum database pertama kali dibuat, gunakan `ADMIN
 ## Uji alur
 
 1. Masuk sebagai admin. Buka **Peserta & angkatan**, tambahkan angkatan untuk salah satu prodi, lalu tambahkan peserta beserta identitas atasan.
-2. Klik **Undang**, pilih Pre Test dan pengisi peserta, lalu buat tautan/QR. Buka tautan di tab baru.
+2. Klik **Periksa data**, setujui identitas lengkap, lalu klik **Undang**, pilih Pre Test dan pengisi peserta, lalu buat tautan/QR. Buka tautan di tab baru.
 3. Isi jawaban, periksa ringkasan pengiriman, lalu kirim final. Nomor tanda terima ditampilkan. Draf dapat disimpan di browser, tetapi berkas perlu dipilih ulang.
 4. Buat undangan Post Test. Hasil dan delta terlihat pada **Hasil evaluasi**. Muat ulang halaman admin untuk mengambil kiriman terbaru.
 5. Buat undangan Pasca Diklat untuk peserta dan atasan secara terpisah. Nilai masing-masing ditampilkan terpisah dengan skala contoh 1–5.
@@ -75,3 +75,9 @@ Pengujian integrasi menjalankan server pada port 3019 menggunakan database semen
 
 Variabel opsional: `PORT` (3010), `HOST` (127.0.0.1), `PUBLIC_URL` (alamat undangan), `DATA_DIR` (lokasi database), `COOKIE_SECURE` (1 untuk HTTPS).
 
+
+### Registrasi dan persetujuan peserta
+
+Siswa mendaftar sendiri dan login dengan NRP. Setiap pendaftaran angkatan menunggu pemeriksaan Admin Urmin melalui Peserta & angkatan → Periksa data. Admin menyetujui identitas lengkap atau memberi catatan perbaikan. Siswa dapat melengkapi data dan mengajukan pemeriksaan ulang. Akses Pre Test/Post Test, termasuk QR, terkunci sebelum persetujuan. Persetujuan berlaku per peserta dan angkatan, bukan untuk soal. Data peserta lama juga perlu diperiksa sebelum membuka ujian baru; nilai yang sudah tersimpan tetap tersedia.
+
+Pilihan satuan kerja dan jabatan dapat ditambah Urmin sambil menunggu daftar resmi. Kop, template laporan, dan tanda tangan menunggu bahan client.

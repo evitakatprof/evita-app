@@ -7,6 +7,7 @@ import path from 'node:path';
 import QRCode from 'qrcode';
 import {score,delta,achievement} from './scoring.mjs';
 import {removeRecord,restoreRecord} from './deletion.mjs';
+import {studentAPI} from './student-api.mjs';
 const root=path.dirname(fileURLToPath(import.meta.url));
 const dataDir=process.env.DATA_DIR||path.join(root,'data');
 const db=await openDatabase(dataDir);
@@ -21,6 +22,10 @@ CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY,token TEXT UNIQUE,
 CREATE TABLE IF NOT EXISTS reports(id INTEGER PRIMARY KEY,cohort_id INTEGER,summary TEXT,recommendation TEXT DEFAULT '',created TEXT);
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,actor TEXT,action TEXT,created TEXT);
 CREATE TABLE IF NOT EXISTS deleted_records(id INTEGER PRIMARY KEY,kind TEXT,name TEXT,body TEXT,actor TEXT,created TEXT);
+CREATE TABLE IF NOT EXISTS student_profiles(user_id INTEGER PRIMARY KEY,body TEXT);
+CREATE TABLE IF NOT EXISTS student_enrollments(user_id INTEGER,participant_id INTEGER,participant_created TEXT,PRIMARY KEY(user_id,participant_id));
+CREATE TABLE IF NOT EXISTS identity_options(kind TEXT,value TEXT,PRIMARY KEY(kind,value));
+CREATE TABLE IF NOT EXISTS participant_access(participant_id INTEGER,participant_created TEXT,status TEXT,reviewed_by TEXT,reviewed_at TEXT,note TEXT,PRIMARY KEY(participant_id,participant_created));
 CREATE UNIQUE INDEX IF NOT EXISTS instrument_version ON instruments(prodi,type,version);
 CREATE UNIQUE INDEX IF NOT EXISTS submission_respondent ON submissions(participant_id,type,respondent);
 CREATE UNIQUE INDEX IF NOT EXISTS participant_identity ON participants(cohort_id,nrp);`));
@@ -51,15 +56,32 @@ const latest=async(prodi,type)=>(await db.prepare('SELECT * FROM instruments WHE
 const sessions=new Map();
 async function body(req){if(req.body&&typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>3800000)fail('Ukuran permintaan terlalu besar',413);chunks.push(chunk)}try{return JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{fail('Isian permintaan tidak valid')}}
 async function userFor(req){const token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('evita='))?.slice(6);return (await db.prepare('SELECT users.id,username,role FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires>?').get(token||'',Date.now()))}
-async function requireUser(req,role){const user=(await userFor(req));if(!user)fail('Silakan masuk terlebih dahulu',401);if(role&&user.role!==role)fail('Akses tidak diizinkan',403);return user}
-async function inviteFor(token){const inv=(await db.prepare('SELECT * FROM invites WHERE token=?').get(token));if(!inv||inv.expires<Date.now())fail('Undangan tidak ditemukan atau sudah kedaluwarsa',404);return inv}
+async function requireUser(req,role){const user=(await userFor(req));if(!user)fail('Silakan masuk terlebih dahulu',401);if(role&&user.role!==role)fail('Akses tidak diizinkan',403);if(!role&&user.role==='student'&&req.url.split('?')[0]!=='/api/password')fail('Akses khusus petugas.',403);return user}
+async function inviteFor(token){const inv=(await db.prepare('SELECT * FROM invites WHERE token=?').get(token));if(!inv||inv.expires<Date.now())fail('Undangan tidak ditemukan atau sudah kedaluwarsa',404);const p=await db.prepare('SELECT * FROM participants WHERE id=?').get(inv.participant_id);await requireParticipantAccess(p,inv.type);return inv}
 async function rows(){return (await db.prepare(`SELECT s.*,p.name,p.nrp,p.unit,p.job,p.boss,c.name cohort,c.prodi FROM submissions s JOIN participants p ON p.id=s.participant_id JOIN cohorts c ON c.id=p.cohort_id ORDER BY s.id DESC`).all()).map(s=>({...s,token:undefined,body:JSON.parse(s.body)}))}
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))};
 const port=Number(process.env.PORT||3010);
+async function participantAccess(p){return await db.prepare('SELECT * FROM participant_access WHERE participant_id=? AND participant_created=?').get(p.id,p.created)||{status:'pending',note:''}}
+async function requireParticipantAccess(p,type){if(!p)fail('Peserta tidak ditemukan',404);if(['pre','post'].includes(type)&&(await participantAccess(p)).status!=='approved')fail('Data peserta belum disetujui Admin Urmin.',403)}
+async function makeInvite(p,type,respondent,actor){
+ await requireParticipantAccess(p,type);
+ if(await db.prepare('SELECT id FROM submissions WHERE participant_id=? AND type=? AND respondent=?').get(p.id,type,respondent))fail('Penilaian untuk responden ini sudah dikirim');
+ const instrument=await latest(p.prodi,type);
+ if(!instrument)fail('Instrumen evaluasi belum tersedia.');
+ let inv=await db.prepare('SELECT * FROM invites WHERE participant_id=? AND type=? AND respondent=? AND expires>? AND instrument_id=? ORDER BY expires DESC LIMIT 1').get(p.id,type,respondent,Date.now(),instrument.id);
+ if(!inv){const token=randomBytes(24).toString('hex'),expires=Date.now()+7*86400000;await db.prepare('INSERT INTO invites VALUES(?,?,?,?,?,?)').run(token,p.id,type,respondent,instrument.id,expires);inv={token,expires}}
+ const deploymentHost=process.env.VERCEL_ENV==='production'?(process.env.VERCEL_PROJECT_PRODUCTION_URL||process.env.VERCEL_URL):process.env.VERCEL_URL;
+ const base=process.env.PUBLIC_URL||(deploymentHost?`https://${deploymentHost}`:`http://localhost:${port}`);const link=`${base.replace(/\/$/,'')}/?invite=${inv.token}`;
+ await audit(actor,`Membuat undangan ${p.id}/${type}/${respondent}`);
+ return {link,qr:await QRCode.toDataURL(link,{width:280,margin:2}),expires:inv.expires,sample:JSON.parse(instrument.body).sample};
+}
+const handleStudent=studentAPI({db,hash,requireUser,body,fail,json,audit,now,clean,makeInvite,participantAccess});
 export async function handler(req,res){try{
  const url=new URL(req.url,'http://localhost');const route=url.pathname;
  res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');
  if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`)fail('Origin tidak diizinkan',403);
+ if(route==='/api/register'&&req.method==='POST'){const key='register:'+req.socket.remoteAddress,attempt=sessions.get(key)||{count:0,start:Date.now()};if(Date.now()-attempt.start>600000){attempt.count=0;attempt.start=Date.now()}sessions.set(key,attempt);if(++attempt.count>20)fail('Terlalu banyak percobaan registrasi. Coba lagi 10 menit kemudian.',429)}
+ if(await handleStudent(req,res,route))return;
  if(route==='/api/login'&&req.method==='POST'){
   const key=req.socket.remoteAddress;const attempt=sessions.get(key)||{count:0,start:Date.now()};if(Date.now()-attempt.start>600000){attempt.count=0;attempt.start=Date.now()}if(++attempt.count>20)fail('Terlalu banyak percobaan. Coba 10 menit lagi.',429);sessions.set(key,attempt);
   const b=await body(req),u=(await db.prepare('SELECT * FROM users WHERE username=?').get(clean(b.username,80)));if(!u||!verify(String(b.password||''),u.hash))fail('Username atau kata sandi salah',401);
@@ -89,6 +111,7 @@ export async function handler(req,res){try{
  if(route==='/api/dashboard'){
   (await requireUser(req));const participants=(await db.prepare('SELECT p.*,c.name cohort,c.prodi FROM participants p JOIN cohorts c ON c.id=p.cohort_id ORDER BY p.id DESC').all());const submissions=(await rows());
   const comparisons=participants.map(p=>{const pre=submissions.find(s=>s.participant_id===p.id&&s.type==='pre'),post=submissions.find(s=>s.participant_id===p.id&&s.type==='post');return {...p,pre:pre?.score??null,post:post?.score??null,delta:delta(pre?.score,post?.score)}});
+  for(const p of participants)p.access=await participantAccess(p);
   return json(res,{cohorts:(await db.prepare('SELECT * FROM cohorts ORDER BY id DESC').all()),participants,submissions:submissions.map(s=>({...s,body:{...s.body,files:s.body.files.map(f=>({name:f.name,type:f.type}))}})),comparisons,reports:(await db.prepare('SELECT r.*,c.name cohort,c.prodi FROM reports r JOIN cohorts c ON c.id=r.cohort_id ORDER BY r.id DESC').all()),audit:(await db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 30').all())});
  }
  if(route==='/api/submission'){(await requireUser(req));const s=(await db.prepare('SELECT * FROM submissions WHERE id=?').get(Number(url.searchParams.get('id'))));if(!s)fail('Hasil tidak ditemukan',404);return json(res,{instrument:publicInstrument((await db.prepare('SELECT * FROM instruments WHERE id=?').get(s.instrument_id)),true)})}
@@ -102,11 +125,7 @@ export async function handler(req,res){try{
  }
  if(route==='/api/invitations'&&req.method==='POST'){
   const u=(await requireUser(req,'admin')),b=await body(req);const p=(await db.prepare('SELECT p.*,c.prodi FROM participants p JOIN cohorts c ON c.id=p.cohort_id WHERE p.id=?').get(Number(b.participantId)));if(!p||!types.includes(b.type)||!['participant','supervisor'].includes(b.respondent)||(['pre','post'].includes(b.type)&&b.respondent!=='participant'))fail('Penugasan tidak valid');
-  if((await db.prepare('SELECT id FROM submissions WHERE participant_id=? AND type=? AND respondent=?').get(p.id,b.type,b.respondent)))fail('Penilaian untuk responden ini sudah dikirim');
-  const instrument=(await latest(p.prodi,b.type));let inv=(await db.prepare('SELECT * FROM invites WHERE participant_id=? AND type=? AND respondent=? AND expires>? AND instrument_id=? ORDER BY expires DESC LIMIT 1').get(p.id,b.type,b.respondent,Date.now(),instrument.id));
-  if(!inv){const token=randomBytes(24).toString('hex'),expires=Date.now()+7*86400000;(await db.prepare('INSERT INTO invites VALUES(?,?,?,?,?,?)').run(token,p.id,b.type,b.respondent,instrument.id,expires));inv={token,expires}}
-  const deploymentHost=process.env.VERCEL_ENV==='production'?(process.env.VERCEL_PROJECT_PRODUCTION_URL||process.env.VERCEL_URL):process.env.VERCEL_URL;
-  const base=process.env.PUBLIC_URL||(deploymentHost?`https://${deploymentHost}`:`http://localhost:${port}`);const link=`${base.replace(/\/$/,'')}/?invite=${inv.token}`;(await audit(u.username,`Membuat undangan ${p.id}/${b.type}/${b.respondent}`));return json(res,{link,qr:await QRCode.toDataURL(link,{width:280,margin:2}),expires:inv.expires,sample:JSON.parse(instrument.body).sample});
+  return json(res,await makeInvite(p,b.type,b.respondent,u.username));
  }
  if(route==='/api/review'&&req.method==='POST'){const u=(await requireUser(req,'admin')),b=await body(req);if(!(await db.prepare('SELECT id FROM submissions WHERE id=?').get(Number(b.id))))fail('Hasil tidak ditemukan',404);if(!clean(b.review))fail('Catatan pemeriksaan wajib diisi');(await db.prepare("UPDATE submissions SET status='reviewed',review=? WHERE id=?").run(clean(b.review),Number(b.id)));(await audit(u.username,`Memeriksa hasil #${b.id}`));return json(res,{ok:true})}
  if(route==='/api/reports'&&req.method==='POST'){const u=(await requireUser(req,'admin')),b=await body(req);if(!clean(b.summary)||!(await db.prepare('SELECT id FROM cohorts WHERE id=?').get(Number(b.cohortId))))fail('Angkatan dan kesimpulan wajib diisi');(await db.prepare('INSERT INTO reports(cohort_id,summary,created) VALUES(?,?,?)').run(Number(b.cohortId),clean(b.summary,10000),now()));(await audit(u.username,'Menerbitkan laporan kepada Kabagkatprof'));return json(res,{ok:true})}
@@ -116,7 +135,7 @@ export async function handler(req,res){try{
  if(route==='/api/trash'){await requireUser(req,'admin');return json(res,await db.prepare('SELECT id,kind,name,actor,created FROM deleted_records ORDER BY id DESC').all())}
  if(route==='/api/restore'&&req.method==='POST'){const u=await requireUser(req,'admin'),b=await body(req);return json(res,await restoreRecord(db,Number(b.id),u.username))}
  if(route.startsWith('/api/'))fail('Endpoint tidak ditemukan',404);
- const allowed={'/':'index.html','/app.js':'app.js','/login-view.js':'login-view.js','/login-art.jpeg':'login-art.jpeg','/app-header.jpeg':'app-header.jpeg','/question-editor.js':'question-editor.js','/styles.css':'styles.css','/brand.png':'brand.png'};const file=allowed[route];if(!file||!existsSync(path.join(root,'public',file)))fail('Halaman tidak ditemukan',404);res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css':file.endsWith('.jpeg')?'image/jpeg':file.endsWith('.png')?'image/png':'text/html; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"});res.end(readFileSync(path.join(root,'public',file)));
+ const allowed={'/':'index.html','/app.js':'app.js','/login-view.js':'login-view.js','/student-view.js':'student-view.js','/login-art.jpeg':'login-art.jpeg','/app-header.jpeg':'app-header.jpeg','/question-editor.js':'question-editor.js','/styles.css':'styles.css','/brand.png':'brand.png'};const file=allowed[route];if(!file||!existsSync(path.join(root,'public',file)))fail('Halaman tidak ditemukan',404);res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css':file.endsWith('.jpeg')?'image/jpeg':file.endsWith('.png')?'image/png':'text/html; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"});res.end(readFileSync(path.join(root,'public',file)));
  }catch(error){if(/UNIQUE constraint failed|SQLITE_CONSTRAINT_UNIQUE/.test(error.message)){error.status=409;error.message='Data sudah tersimpan atau sedang diperbarui. Muat ulang sebelum mencoba lagi.'}if(!error.status)console.error(error);if(!res.headersSent)json(res,{error:error.status?error.message:'Terjadi kesalahan server'},error.status||500);else res.end()}}
 if(!process.env.VERCEL && process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
  const server=http.createServer(handler);
