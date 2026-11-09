@@ -25,7 +25,9 @@ test('full workflow enforces roles, versions, scoring and final submission',asyn
    assert.equal((await req('staff-accounts',null,cookie)).status,403);
    assert.equal((await req('staff-accounts',newAdmin,cookie)).status,403);
   }
-  assert.equal((await req('dashboard',null,superadmin)).status,403);
+  assert.equal((await req('dashboard',null,superadmin)).status,200);
+  assert.equal((await req('instruments',null,superadmin)).status,200);
+  assert.equal((await req('student',null,superadmin)).status,403);
   assert.equal((await req('staff-accounts',{...newAdmin,role:'superadmin'},superadmin)).status,400);
   assert.equal((await req('staff-accounts',{...newAdmin,username:'12345'},superadmin)).status,400);
   assert.equal((await req('staff-accounts',{...newAdmin,password:'pendek'},superadmin)).status,400);
@@ -39,11 +41,11 @@ test('full workflow enforces roles, versions, scoring and final submission',asyn
   assert.equal((await req('login',{username:'urmin.baru',password:newAdmin.password})).body.role,'admin');
   assert.equal((await req('login',{username:newLeader.username,password:newLeader.password})).body.role,'leader');
   assert.equal((await req('cohorts',{name:'Angkatan uji',prodi:'DPDKN'},leader)).status,403);
-  const cohort=(await req('cohorts',{name:'Angkatan uji',prodi:'DPDKN'},admin)).body.id;
+  const cohort=(await req('cohorts',{name:'Angkatan uji',prodi:'DPDKN'},superadmin)).body.id;
   const person=(await req('participants',{cohortId:cohort,name:'Peserta Uji',nrp:'123',unit:'Satker',job:'Petugas',boss:'Atasan',bossJob:'Kepala'},admin)).body.id;
   assert.equal((await req('invitations',{participantId:person,type:'pre',respondent:'participant'},admin)).status,403);
   assert.equal((await req('participant-decision',{participantId:person,decision:'approved'},leader)).status,403);
-  assert.equal((await req('participant-decision',{participantId:person,decision:'approved'},admin)).status,200);
+  assert.equal((await req('participant-decision',{participantId:person,decision:'approved'},superadmin)).status,200);
   const invite=(await req('invitations',{participantId:person,type:'pre',respondent:'participant'},admin)).body;
   assert.match(invite.qr,/^data:image\/png;base64,/);const token=new URL(invite.link).searchParams.get('invite');
   const form=(await req('invite?token='+token)).body;assert.equal(form.instrument.questions[0].key,undefined);
@@ -78,15 +80,16 @@ test('full workflow enforces roles, versions, scoring and final submission',asyn
   assert.equal((await req('reports',{cohortId:cohort,summary:'Kesimpulan uji'},admin)).status,200);
   const report=(await req('dashboard',null,leader)).body.reports[0];
   assert.equal((await req('recommendation',{id:report.id,text:'Tindak lanjut'},admin)).status,403);
+  assert.equal((await req('recommendation',{id:report.id,text:'Rekomendasi Superadmin'},superadmin)).status,200);
   assert.equal((await req('recommendation',{id:report.id,text:'Tindak lanjut'},leader)).status,200);
   assert.equal((await req('evidence?id=1&index=0')).status,401);
   assert.equal((await req('delete',{kind:'cohort',id:cohort})).status,401);
   assert.equal((await req('delete',{kind:'cohort',id:cohort},leader)).status,403);
   assert.equal((await req('trash',null,leader)).status,403);
-  const removedResult=await req('delete',{kind:'submission',id:sent.body.id},admin);assert.equal(removedResult.status,200);
+  const removedResult=await req('delete',{kind:'submission',id:sent.body.id},superadmin);assert.equal(removedResult.status,200);
   assert.equal((await req('invite?token='+token)).status,404);
   assert.equal((await req('dashboard',null,admin)).body.comparisons[0].pre,null);
-  assert.equal((await req('restore',{id:removedResult.body.id},admin)).status,200);
+  assert.equal((await req('restore',{id:removedResult.body.id},superadmin)).status,200);
   assert.equal((await req('dashboard',null,admin)).body.comparisons[0].pre,100);
   const removedPerson=await req('delete',{kind:'participant',id:person},admin);assert.equal(removedPerson.status,200);
   dashboard=(await req('dashboard',null,admin)).body;assert.equal(dashboard.participants.length,0);assert.equal(dashboard.submissions.length,0);assert.equal(dashboard.reports.length,1);

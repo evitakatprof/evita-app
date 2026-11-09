@@ -65,8 +65,9 @@ async function userFor(req){const token=(req.headers.cookie||'').split(';').map(
 async function requireUser(req,role){
  const user=await userFor(req);
  if(!user)fail('Silakan masuk terlebih dahulu',401);
- if(role&&user.role!==role)fail('Akses tidak diizinkan',403);
- if(!role&&!['admin','leader'].includes(user.role)&&req.url.split('?')[0]!=='/api/password')fail('Akses tidak diizinkan',403);
+ const managesEvaluations=['admin','leader'].includes(role);
+ if(role&&user.role!==role&&!(user.role==='superadmin'&&managesEvaluations))fail('Akses tidak diizinkan',403);
+ if(!role&&!['admin','leader','superadmin'].includes(user.role)&&req.url.split('?')[0]!=='/api/password')fail('Akses tidak diizinkan',403);
  return user;
 }
 async function inviteFor(token){const inv=(await db.prepare('SELECT * FROM invites WHERE token=?').get(token));if(!inv||inv.expires<Date.now())fail('Undangan tidak ditemukan atau sudah kedaluwarsa',404);const p=await db.prepare('SELECT * FROM participants WHERE id=?').get(inv.participant_id);await requireParticipantAccess(p,inv.type);return inv}
