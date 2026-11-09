@@ -12,10 +12,13 @@ Buat **database libSQL** pada Turso (pilih libSQL yang kompatibel dengan `@libsq
 | `TURSO_AUTH_TOKEN` | Token baca/tulis database staging |
 | `ADMIN_PASSWORD` | Kata sandi admin awal, minimal 12 karakter |
 | `LEADER_PASSWORD` | Kata sandi pimpinan awal, minimal 12 karakter dan berbeda dari admin |
+| `SUPERADMIN_PASSWORD` | Kata sandi unik sepanjang 12–128 karakter untuk membuat akun `superadmin`, opsional jika fitur Kelola akun belum digunakan |
 | `COOKIE_SECURE` | `1` |
 | `PUBLIC_URL` | URL HTTPS Vercel/domain yang stabil, tanpa `/` di akhir; dapat diisi setelah deployment pertama |
 
 Gunakan database kosong terpisah untuk staging. Pada startup pertama, tabel, akun `admin`/`pimpinan`, dan delapan instrumen contoh dibuat otomatis. Password environment hanya untuk inisialisasi akun baru: mengubahnya tidak mereset akun yang sudah ada. Kredensial lokal lama tidak disalin ke cloud.
+
+Untuk mengaktifkan **Kelola akun** pada deployment baru atau yang sudah berjalan, tambahkan `SUPERADMIN_PASSWORD` dan redeploy. Masuk dengan username `superadmin` setelah deployment siap. Setelah akun dibuat, variabel ini dapat dihapus dan deployment dapat dijalankan ulang.
 
 Data peserta, sesi, hasil, dan bukti disimpan di database online. Versi awal menyimpan bukti kecil di database (maksimal 2 file × 1 MB); penyimpanan objek dapat ditambahkan ketika kebutuhan unggahan meningkat. Batas ini menjaga permintaan formulir di bawah batas payload Vercel setelah encoding.
 

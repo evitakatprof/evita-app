@@ -17,6 +17,19 @@ Akun awal dibuat saat server pertama dijalankan. Username `admin` untuk Urmin da
 
 Untuk menentukan kata sandi sebelum database pertama kali dibuat, gunakan `ADMIN_PASSWORD` dan `LEADER_PASSWORD` pada environment. Mengubah environment ini tidak mengubah akun pada database yang sudah ada.
 
+### Membuat akun Admin Urmin dan Pimpinan
+
+Untuk menyiapkan akun `superadmin` di Windows, jalankan perintah berikut dari folder proyek:
+
+```powershell
+$env:SUPERADMIN_PASSWORD = Read-Host 'Kata sandi awal Superadmin' -MaskInput
+npm.cmd start
+```
+
+Gunakan kata sandi unik sepanjang 12–128 karakter. Akun `superadmin` dibuat satu kali, termasuk pada database lama. Setelah masuk sebagai `superadmin`, buka **Kelola akun**, pilih **Admin Urmin** atau **Pimpinan / Kabagkatprof**, lalu masukkan username dan kata sandi awal. Daftar akun petugas tampil di halaman yang sama. Superadmin dapat mengganti kata sandinya sendiri dari halaman tersebut.
+
+Setelah akun dibuat, `SUPERADMIN_PASSWORD` dapat dihapus dari environment. Mengubah nilainya tidak mereset kata sandi akun yang sudah ada. Untuk Vercel, gunakan pengaturan pada [panduan deployment](DEPLOY-VERCEL.md).
+
 ## Uji alur
 
 1. Masuk sebagai admin. Buka **Peserta & angkatan**, tambahkan angkatan untuk salah satu prodi, lalu tambahkan peserta beserta identitas atasan.

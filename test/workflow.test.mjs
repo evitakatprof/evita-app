@@ -7,7 +7,7 @@ import path from 'node:path';
 import {once} from 'node:events';
 test('full workflow enforces roles, versions, scoring and final submission',async()=>{
  const dir=mkdtempSync(path.join(tmpdir(),'evita-test-'));
- const child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:'3019',DATA_DIR:dir,ADMIN_PASSWORD:'test-admin-password',LEADER_PASSWORD:'test-leader-password'},stdio:['ignore','pipe','pipe']});
+ const child=spawn(process.execPath,['server.mjs'],{env:{...process.env,PORT:'3019',DATA_DIR:dir,ADMIN_PASSWORD:'test-admin-password',LEADER_PASSWORD:'test-leader-password',SUPERADMIN_PASSWORD:'test-superadmin-password'},stdio:['ignore','pipe','pipe']});
  try{
   await Promise.race([once(child.stdout,'data'),new Promise((_,reject)=>setTimeout(()=>reject(Error('Server startup timeout')),8000).unref())]);
   async function req(route,body,cookie){const r=await fetch('http://127.0.0.1:3019/api/'+route,{method:body?'POST':'GET',headers:{...(body?{'Content-Type':'application/json'}:{}),...(cookie?{cookie}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,body:await r.json(),cookie:r.headers.get('set-cookie')?.split(';')[0]}}
@@ -15,6 +15,29 @@ test('full workflow enforces roles, versions, scoring and final submission',asyn
   const admin=(await req('login',{username:'admin',password:'test-admin-password'})).cookie;
   const leader=(await req('login',{username:'pimpinan',password:'test-leader-password'})).cookie;
   assert.ok(admin);assert.ok(leader);
+  const superadminLogin=await req('login',{username:'superadmin',password:'test-superadmin-password'});
+  assert.equal(superadminLogin.body.role,'superadmin');
+  const superadmin=superadminLogin.cookie;
+  const newAdmin={username:'Urmin.Baru',role:'admin',password:'new-admin-password'};
+  const newLeader={username:'pimpinan.baru',role:'leader',password:'new-leader-password'};
+  assert.equal((await req('staff-accounts')).status,401);
+  for(const cookie of [admin,leader]){
+   assert.equal((await req('staff-accounts',null,cookie)).status,403);
+   assert.equal((await req('staff-accounts',newAdmin,cookie)).status,403);
+  }
+  assert.equal((await req('dashboard',null,superadmin)).status,403);
+  assert.equal((await req('staff-accounts',{...newAdmin,role:'superadmin'},superadmin)).status,400);
+  assert.equal((await req('staff-accounts',{...newAdmin,username:'12345'},superadmin)).status,400);
+  assert.equal((await req('staff-accounts',{...newAdmin,password:'pendek'},superadmin)).status,400);
+  assert.equal((await req('staff-accounts',newAdmin,superadmin)).status,201);
+  assert.equal((await req('staff-accounts',newAdmin,superadmin)).status,409);
+  assert.equal((await req('staff-accounts',newLeader,superadmin)).status,201);
+  assert.deepEqual((await req('staff-accounts',null,superadmin)).body,[
+   {username:'admin',role:'admin'},{username:'pimpinan',role:'leader'},
+   {username:'pimpinan.baru',role:'leader'},{username:'urmin.baru',role:'admin'}
+  ]);
+  assert.equal((await req('login',{username:'urmin.baru',password:newAdmin.password})).body.role,'admin');
+  assert.equal((await req('login',{username:newLeader.username,password:newLeader.password})).body.role,'leader');
   assert.equal((await req('cohorts',{name:'Angkatan uji',prodi:'DPDKN'},leader)).status,403);
   const cohort=(await req('cohorts',{name:'Angkatan uji',prodi:'DPDKN'},admin)).body.id;
   const person=(await req('participants',{cohortId:cohort,name:'Peserta Uji',nrp:'123',unit:'Satker',job:'Petugas',boss:'Atasan',bossJob:'Kepala'},admin)).body.id;
@@ -98,6 +121,8 @@ test('full workflow enforces roles, versions, scoring and final submission',asyn
   assert.equal((await req('register',registration)).status,201);
   assert.equal((await req('register',registration)).status,409);
   const studentLogin=await req('login',{username:registration.nrp,password:registration.password});assert.equal(studentLogin.body.role,'student');const student=studentLogin.cookie;
+  assert.equal((await req('staff-accounts',null,student)).status,403);
+  assert.equal((await req('staff-accounts',newAdmin,student)).status,403);
   for(const endpoint of ['dashboard','instruments','trash','submission?id=1','evidence?id=1&index=0'])assert.equal((await req(endpoint,null,student)).status,403);
   assert.equal((await req('participant-decision',{participantId:person,decision:'approved'},student)).status,403);
   let portal=(await req('student',null,student)).body;assert.equal(portal.evaluations.length,1);assert.equal(portal.profile.previousTraining,'yes');assert.equal(portal.profile.password,undefined);

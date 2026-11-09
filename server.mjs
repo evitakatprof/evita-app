@@ -40,6 +40,12 @@ if(!(await db.prepare('SELECT id FROM users LIMIT 1').get())) {
  for(const [username,password] of Object.entries(creds)) (await db.prepare('INSERT OR IGNORE INTO users(username,hash,role) VALUES(?,?,?)').run(username,hash(password),username==='admin'?'admin':'leader'));
  if(!process.env.TURSO_DATABASE_URL) writeFileSync(path.join(dataDir,'akses-awal.txt'),`AKSES LOKAL AWAL — jangan dibagikan\nAdmin Urmin\nUsername: admin\nPassword: ${creds.admin}\n\nKabagkatprof\nUsername: pimpinan\nPassword: ${creds.pimpinan}\n\nGanti kata sandi melalui menu akun setelah masuk.\n`);
 }
+const superadminPassword=process.env.SUPERADMIN_PASSWORD;
+if(superadminPassword && !(await db.prepare("SELECT id FROM users WHERE username='superadmin' AND role='superadmin'").get())) {
+ if(superadminPassword.length<12 || superadminPassword.length>128) throw Error('SUPERADMIN_PASSWORD harus 12–128 karakter.');
+ await db.prepare("INSERT INTO users(username,hash,role) VALUES('superadmin',?,'superadmin') ON CONFLICT(username) DO NOTHING").run(hash(superadminPassword));
+ if(!(await db.prepare("SELECT id FROM users WHERE username='superadmin' AND role='superadmin'").get())) throw Error('Username superadmin sudah dipakai oleh akun lain.');
+}
 const types=['pre','post','followup','performance'];
 for(const prodi of ['DPDKN','DPMKN']) for(const type of types) if(!(await db.prepare('SELECT id FROM instruments WHERE prodi=? AND type=?').get(prodi,type))) {
  const label=prodi==='DPDKN'?'Deck':'Mesin';
@@ -56,7 +62,13 @@ const latest=async(prodi,type)=>(await db.prepare('SELECT * FROM instruments WHE
 const sessions=new Map();
 async function body(req){if(req.body&&typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;let chunks=[],size=0;for await(const chunk of req){size+=chunk.length;if(size>3800000)fail('Ukuran permintaan terlalu besar',413);chunks.push(chunk)}try{return JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{fail('Isian permintaan tidak valid')}}
 async function userFor(req){const token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('evita='))?.slice(6);return (await db.prepare('SELECT users.id,username,role FROM sessions JOIN users ON users.id=sessions.user_id WHERE token=? AND expires>?').get(token||'',Date.now()))}
-async function requireUser(req,role){const user=(await userFor(req));if(!user)fail('Silakan masuk terlebih dahulu',401);if(role&&user.role!==role)fail('Akses tidak diizinkan',403);if(!role&&user.role==='student'&&req.url.split('?')[0]!=='/api/password')fail('Akses khusus petugas.',403);return user}
+async function requireUser(req,role){
+ const user=await userFor(req);
+ if(!user)fail('Silakan masuk terlebih dahulu',401);
+ if(role&&user.role!==role)fail('Akses tidak diizinkan',403);
+ if(!role&&!['admin','leader'].includes(user.role)&&req.url.split('?')[0]!=='/api/password')fail('Akses tidak diizinkan',403);
+ return user;
+}
 async function inviteFor(token){const inv=(await db.prepare('SELECT * FROM invites WHERE token=?').get(token));if(!inv||inv.expires<Date.now())fail('Undangan tidak ditemukan atau sudah kedaluwarsa',404);const p=await db.prepare('SELECT * FROM participants WHERE id=?').get(inv.participant_id);await requireParticipantAccess(p,inv.type);return inv}
 async function rows(){return (await db.prepare(`SELECT s.*,p.name,p.nrp,p.unit,p.job,p.boss,c.name cohort,c.prodi FROM submissions s JOIN participants p ON p.id=s.participant_id JOIN cohorts c ON c.id=p.cohort_id ORDER BY s.id DESC`).all()).map(s=>({...s,token:undefined,body:JSON.parse(s.body)}))}
 const json=(res,value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))};
@@ -89,6 +101,24 @@ export async function handler(req,res){try{
  }
  if(route==='/api/logout'&&req.method==='POST'){const token=(req.headers.cookie||'').match(/evita=([a-f0-9]+)/)?.[1];(await db.prepare('DELETE FROM sessions WHERE token=?').run(token||''));res.setHeader('Set-Cookie','evita=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,{ok:true})}
  if(route==='/api/me')return json(res,(await userFor(req))||null);
+ if(route==='/api/staff-accounts'){
+  const actor=await requireUser(req,'superadmin');
+  if(req.method==='GET')return json(res,await db.prepare("SELECT username,role FROM users WHERE role IN ('admin','leader') ORDER BY username").all());
+  if(req.method!=='POST')fail('Metode tidak diizinkan',405);
+  const {username:input,password,role}=await body(req)||{};
+  const username=typeof input==='string'?input.trim().toLowerCase():'';
+  if(!/^[a-z][a-z0-9._-]{2,79}$/.test(username))fail('Username harus 3–80 karakter, diawali huruf, dan hanya berisi huruf, angka, titik, garis bawah, atau tanda hubung.');
+  if(username==='superadmin')fail('Username ini dicadangkan.');
+  if(!['admin','leader'].includes(role))fail('Pilih peran Admin Urmin atau Pimpinan.');
+  if(typeof password!=='string'||password.length<12||password.length>128)fail('Kata sandi harus 12–128 karakter.');
+  const passwordHash=hash(password);
+  await db.transaction(async tx=>{
+   const result=await tx.prepare('INSERT INTO users(username,hash,role) VALUES(?,?,?) ON CONFLICT(username) DO NOTHING').run(username,passwordHash,role);
+   if(!result.changes)fail('Username sudah dipakai.',409);
+   await tx.prepare('INSERT INTO audit(actor,action,created) VALUES(?,?,?)').run(actor.username,`Membuat akun ${username} (${role==='admin'?'Admin Urmin':'Pimpinan'})`,now());
+  });
+  return json(res,{username,role},201);
+ }
  if(route==='/api/password'&&req.method==='POST'){const u=(await requireUser(req)),b=await body(req),stored=(await db.prepare('SELECT hash FROM users WHERE id=?').get(u.id));if(!verify(String(b.current||''),stored.hash))fail('Kata sandi lama salah');if(String(b.password||'').length<12)fail('Kata sandi baru minimal 12 karakter');(await db.prepare('UPDATE users SET hash=? WHERE id=?').run(hash(b.password),u.id));(await db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id));(await audit(u.username,'Mengubah kata sandi'));return json(res,{ok:true})}
  if(route==='/api/invite'){
   const inv=(await inviteFor(url.searchParams.get('token')));const p=(await db.prepare('SELECT p.*,c.name cohort,c.prodi FROM participants p JOIN cohorts c ON c.id=p.cohort_id WHERE p.id=?').get(inv.participant_id));const instrument=publicInstrument((await db.prepare('SELECT * FROM instruments WHERE id=?').get(inv.instrument_id)));const sent=(await db.prepare('SELECT id,created FROM submissions WHERE token=?').get(inv.token));return json(res,{participant:p,instrument,type:inv.type,respondent:inv.respondent,expires:inv.expires,sent});
